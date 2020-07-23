@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" >
 
-<title>关于 | 黄为民的个人博客</title>
+<title>STM32+USART+蓝牙模块(BT04) | 黄为民的个人博客</title>
 <meta name="description" content="温故而知新">
 
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -81,21 +81,113 @@
       <div class="sm-12 md-8 col">
         <div class="paper">
           <article class="article">
-            <h1>关于</h1>
+            <h1>STM32+USART+蓝牙模块(BT04)</h1>
             <p class="article-meta">
-              2019-01-25
+              2020-07-23
               
             </p>
             
             <div class="post-content">
-              <!-- more -->
-<blockquote>
-<p>欢迎来到我的小站呀，很高兴遇见你！🤝</p>
-</blockquote>
-<h2 id="关于本站">🏠 关于本站</h2>
-<h2 id="博主是谁">👨‍💻 博主是谁</h2>
-<h2 id="兴趣爱好">⛹ 兴趣爱好</h2>
-<h2 id="联系我呀">📬 联系我呀</h2>
+              <pre><code>硬件：正点原子战舰V3
+	 蓝牙模块BT04(HC-05也一样的，不过指令不一样)
+	 USB转TTL模块
+	 
+软件：XCOM串口调试助手(PC)
+	 蓝牙调试宝(安卓平台)
+</code></pre>
+<p>​	昨晚调试蓝牙模块，这个蓝牙模块因为只需要连接串口就可以正常工作，应该来说比较简单。但是还是遇到一个小问题，找了很久的原因，调试了很长时间。</p>
+<p>​	我想要测试的功能是利用手机APP发送命令控制LED灯，下面是主函数：</p>
+<pre><code class="language-c++">int main(void)
+{
+	u16 t;  
+	u16 len;	
+	u16 times=0;
+	delay_init();
+	LED_Init();
+	KEY_Init();
+	
+	USART_Config();
+	while(1)
+	{
+		if(USART_RX_STA&amp;0x8000)
+		{					   
+			switch(USART_RX_BUF[0])
+			{
+				case('A'):
+					Send_data(DEBUG_USARTx,&quot;首位为A，LED1亮\r\n&quot;);
+					LED0=1;
+					LED1=0;
+					break;
+				case('B'):
+					Send_data(DEBUG_USARTx,&quot;首位为B，LED0亮\r\n&quot;);
+					LED0=0;
+					LED1=1;
+					break;
+			}
+			USART_RX_STA=0;
+		}
+
+	}
+}	
+</code></pre>
+<p>​	我的想法是，命令中第一位字符为“A”则LED1亮，LED0灭，第一位字符为B则相反。</p>
+<p>​	这里我用的是中断接收函数，我最开始使用的是正点原子一样的函数直接搬过来，使用PC端的串口调试助手使用USB转TTL模块调试可以正常工作，但是当我利用蓝牙模块连接到手机发送命令无法正常工作，下面是正点原子的中断服务函数：</p>
+<pre><code class="language-c++">void DEBUG_USART_IRQHandler(void)                	//串口1中断服务程序
+	{
+	u8 Res;
+	if(USART_GetITStatus(DEBUG_USARTx, USART_IT_RXNE) != RESET)  //接收中断(接收到的数据必须是0x0d 0x0a结尾)
+		{
+		Res =USART_ReceiveData(DEBUG_USARTx);	//读取接收到的数据
+		if((USART_RX_STA&amp;0x8000)==0)//接收未完成
+			{
+			if(USART_RX_STA&amp;0x4000)//接收到了0x0d
+			{
+			if(Res!='D')USART_RX_STA=0;//接收错误,重新开始
+			else {USART_RX_STA|=0x8000;//接收完成了
+			Send_data(DEBUG_USARTx,&quot;完成一次传输\r\n&quot;);
+			} 
+			}
+			else //还没收到0X0D
+			{	
+			if(Res=='+')USART_RX_STA|=0x8000;
+			else
+			{
+			Send_data(DEBUG_USARTx,&quot;写入缓冲\r\n&quot;);
+			USART_RX_BUF[USART_RX_STA&amp;0X3FFF]=Res ;
+			USART_RX_STA++;
+			if(USART_RX_STA&gt;(USART_REC_LEN-1))USART_RX_STA=0;//接收数据错误,重新开始接收	  
+					}		 
+				}	
+			}   		 
+     }	 
+}
+</code></pre>
+<p>​	后来找了很多原因也找不到，最后发现是因为这个中断函数接受的数据要求0x0a 0x0d结束，电脑串口助手发送新行会发送这两个字符，但是按说换行符只有一个0x0a，没有0x0d，所以无法接收到正确的命令。感谢这位大哥。</p>
+<figure data-type="image" tabindex="1"><img src="https://gitee.com/hwmmyspace/MDImg/raw/master/6cc16eea759feb04530b5c4c2635f84.jpg" alt="" loading="lazy"></figure>
+<p>后面改了程序，把示意命令结束的符号设置为“+”，这样在PC和安卓端都能正常发出命令。</p>
+<pre><code class="language-c++">void DEBUG_USART_IRQHandler(void)                	//串口1中断服务程序
+	{
+	u8 Res;
+	if(USART_GetITStatus(DEBUG_USARTx, USART_IT_RXNE) != RESET)  
+	{
+		Res =USART_ReceiveData(DEBUG_USARTx);	//读取接收到的数据
+		if((USART_RX_STA&amp;0x8000)==0)//接收未完成
+        {		
+            if(Res=='+')USART_RX_STA|=0x8000;
+            else
+            {
+//              Send_data(DEBUG_USARTx,&quot;写入缓冲\r\n&quot;);
+                USART_RX_BUF[USART_RX_STA&amp;0X3FFF]=Res ;
+                USART_RX_STA++;
+                if(USART_RX_STA&gt;(USART_REC_LEN-1))USART_RX_STA=0;
+            }		 
+
+        }   		 
+     }
+}
+</code></pre>
+<h3 id="后记">后记</h3>
+<p>在调试蓝牙时，发现有些app不能搜到我这个蓝牙模块，试了好几个才找到这个蓝牙调试宝可以，虽然有广告，但至少能用TAT.</p>
 
             </div>
           </article>
@@ -106,9 +198,9 @@
               <div class="next">
                 下一篇
               </div>
-              <a href="https://jiangli1252.github.io/post/hello-gridea/">
+              <a href="https://jiangli1252.github.io/post/about/">
                 <h3 class="post-title">
-                  Hello Gridea
+                  关于
                 </h3>
               </a>
             </div>
@@ -177,7 +269,7 @@
     </div>
     <div class="row">
       
-        <a href="https://jiangli1252.github.io/tag/pWqzpRCxa/" class="badge ">
+        <a href="https://jiangli1252.github.io/tag/pWqzpRCxa/" class="badge success">
           Gridea
         </a>
       
